@@ -110,6 +110,98 @@ def center_window(window, width, height, parent=None):
         
     window.after(100, _apply_centered_position)
 
+def bind_russian_hotkeys(widget):
+    """
+    Аппаратно-независимая обработка горячих клавиш (Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+X)
+    для русской и английской раскладок клавиатуры на уровне базовых виджетов Windows/Linux.
+    """
+    target = widget
+    if hasattr(widget, "_entry"):
+        target = widget._entry
+    elif hasattr(widget, "_textbox"):
+        target = widget._textbox
+
+    def handle_control_keys(event):
+        key = event.keysym.lower()
+        keycode = event.keycode
+        
+        # Вставка (Ctrl+V) -> код клавиши 86 на Windows
+        if keycode == 86 or key in ('v', 'cyrillic_em'):
+            try:
+                text = event.widget.clipboard_get()
+                try:
+                    if event.widget.tag_ranges("sel"):
+                        event.widget.delete("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        if event.widget.selection_present():
+                            event.widget.delete("sel.first", "sel.last")
+                    except Exception:
+                        pass
+                event.widget.insert("insert", text)
+            except Exception:
+                pass
+            return "break"
+            
+        # Копирование (Ctrl+C) -> код клавиши 67 на Windows
+        elif keycode == 67 or key in ('c', 'cyrillic_es'):
+            try:
+                selected_text = None
+                try:
+                    selected_text = event.widget.get("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        selected_text = event.widget.selection_get()
+                    except Exception:
+                        pass
+                if selected_text:
+                    event.widget.clipboard_clear()
+                    event.widget.clipboard_append(selected_text)
+            except Exception:
+                pass
+            return "break"
+            
+        # Выделить все (Ctrl+A) -> код клавиши 65 на Windows
+        elif keycode == 65 or key in ('a', 'cyrillic_ef'):
+            try:
+                if hasattr(event.widget, "tag_add"):
+                    event.widget.tag_add("sel", "1.0", "end-1c")
+                    event.widget.mark_set("insert", "1.0")
+                elif hasattr(event.widget, "select_range"):
+                    event.widget.select_range(0, "end")
+                    event.widget.icursor("end")
+            except Exception:
+                pass
+            return "break"
+            
+        # Вырезать (Ctrl+X) -> код клавиши 88 на Windows
+        elif keycode == 88 or key in ('x', 'cyrillic_che'):
+            try:
+                selected_text = None
+                try:
+                    selected_text = event.widget.get("sel.first", "sel.last")
+                    if selected_text:
+                        event.widget.clipboard_clear()
+                        event.widget.clipboard_append(selected_text)
+                        event.widget.delete("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        selected_text = event.widget.selection_get()
+                        if selected_text:
+                            event.widget.clipboard_clear()
+                            event.widget.clipboard_append(selected_text)
+                            event.widget.delete("sel.first", "sel.last")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return "break"
+
+    try:
+        target.bind("<Control-KeyPress>", handle_control_keys)
+    except Exception as e:
+        print(f"[Ошибка привязки клавиш]: {e}")
+
 # =====================================================================
 # ФОНОВЫЙ FLASK СЕРВЕР (ПРИЕМ ДАННЫХ ИЗ РАСШИРЕНИЯ)
 # =====================================================================
@@ -152,7 +244,7 @@ class JobHunterApp(ctk.CTk):
         self.worker_thread = None
         self.stop_worker_event = threading.Event()
         
-        self.title("Job Hunter AI v1.0")
+        self.title("Job Hunter AI v1.1")
         self.resizable(False, False)
         self.configure(fg_color="#1A1D1A")
         
@@ -186,16 +278,33 @@ class JobHunterApp(ctk.CTk):
         
         self.first_name_input = ctk.CTkEntry(name_frame, placeholder_text="Имя (например, Иван)", height=45, fg_color="#262A26")
         self.first_name_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        bind_russian_hotkeys(self.first_name_input)
         
         self.last_name_input = ctk.CTkEntry(name_frame, placeholder_text="Фамилия (например, Иванов)", height=45, fg_color="#262A26")
         self.last_name_input.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        bind_russian_hotkeys(self.last_name_input)
 
-        # Опыт работы и навыки (Резюме)
-        resume_lbl = ctk.CTkLabel(self, text="Ваш опыт работы и навыки (для генерации писем):", font=("Arial", 13, "bold"), text_color="#E5E7EB")
-        resume_lbl.pack(anchor="w", padx=30, pady=(15, 5))
+        # Опыт работы и навыки (Резюме) - Заголовок и кнопка вставки
+        resume_header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        resume_header_frame.pack(anchor="w", padx=30, pady=(15, 5), fill="x")
+        
+        resume_lbl = ctk.CTkLabel(resume_header_frame, text="Ваш опыт работы и навыки (для генерации писем):", font=("Arial", 13, "bold"), text_color="#E5E7EB")
+        resume_lbl.pack(side="left")
+        
+        def paste_to_resume():
+            try:
+                clipboard_text = self.clipboard_get()
+                self.resume_input.delete("0.0", "end")
+                self.resume_input.insert("0.0", clipboard_text.strip())
+            except Exception:
+                pass
+
+        btn_paste_resume = ctk.CTkButton(resume_header_frame, text="Вставить 📋", width=95, height=26, font=("Arial", 11, "bold"), fg_color="#065F46", hover_color="#047857", command=paste_to_resume)
+        btn_paste_resume.pack(side="right")
         
         self.resume_input = ctk.CTkTextbox(self, height=140, fg_color="#262A26")
         self.resume_input.pack(pady=5, padx=30, fill="x")
+        bind_russian_hotkeys(self.resume_input)
 
         # Лицензия / API Ключ Gemini
         key_lbl = ctk.CTkLabel(self, text="Лицензия и ИИ-доступ:", font=("Arial", 13, "bold"), text_color="#E5E7EB")
@@ -206,6 +315,7 @@ class JobHunterApp(ctk.CTk):
         
         self.api_key_input = ctk.CTkEntry(key_frame, placeholder_text="Введите ваш Gemini API Key (начинается с AIza...)", height=45, fg_color="#262A26", show="*")
         self.api_key_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        bind_russian_hotkeys(self.api_key_input)
         
         btn_paste = ctk.CTkButton(key_frame, text="Вставить 📋", width=100, height=45, fg_color="#065F46", hover_color="#047857", command=self.paste_key)
         btn_paste.pack(side="left", padx=5)

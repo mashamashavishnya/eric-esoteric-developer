@@ -1,6 +1,7 @@
 # results_ui.py
 import os
 import sys
+import webbrowser
 import customtkinter as ctk
 import storage_manager
 from tkinter import messagebox
@@ -15,7 +16,8 @@ def force_dark_title_bar(window):
         import ctypes
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
-        if hwnd == 0: hwnd = window.winfo_id()
+        if hwnd == 0: 
+            hwnd = window.winfo_id()
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(ctypes.c_int(1)), 4)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(ctypes.c_int(1)), 4)
     except Exception:
@@ -33,9 +35,9 @@ def set_window_icon(window):
 
 def center_window(window, width, height, parent=None):
     """
-    Полностью стабильная функция центрирования окон для High-DPI экранов.
-    Предотвращает смещение и уплывание окон из-за повторного масштабирования в Windows.
-    Рассчитывает физические координаты экрана для идеально точной стыковки.
+    Абсолютно безопасная функция центрирования окон для High-DPI экранов.
+    Использует прозрачность вместо withdraw для предотвращения сбоя инициализации handles.
+    Дублирует поведение из main_app.py для пиксель-в-пиксель совпадения центрирования.
     """
     try:
         window.attributes("-alpha", 0.0)
@@ -45,52 +47,45 @@ def center_window(window, width, height, parent=None):
     def _apply_centered_position():
         if not window.winfo_exists():
             return
-        
         try:
-            # Заставляем систему обновить геометрию перед расчетами
             window.update_idletasks()
             
-            # Безопасно получаем масштаб через приватный метод инстанса CTk
+            # Безопасное получение масштаба через приватный метод инстанса CTk
             try:
                 scaling = window._get_window_scaling()
-                if not scaling or scaling <= 0:
-                    scaling = 1.0
             except Exception:
                 scaling = 1.0
 
             scaled_width = int(width * scaling)
             scaled_height = int(height * scaling)
-
+            
             if parent and parent.winfo_exists():
-                # Находим физические координаты родительского окна на экране
+                # Находим координаты родительского окна (уже масштабированы системой)
                 parent_x = parent.winfo_x()
                 parent_y = parent.winfo_y()
                 parent_w = parent.winfo_width()
                 parent_h = parent.winfo_height()
                 
-                # Рассчитываем точный центр относительно родительского окна
                 x = parent_x + (parent_w - scaled_width) // 2
                 y = parent_y + (parent_h - scaled_height) // 2
             else:
-                # Если родителя нет, берем физический размер всего экрана монитора
+                # Размеры экрана монитора в системных координатах
                 screen_width = window.winfo_screenwidth()
                 screen_height = window.winfo_screenheight()
                 
                 x = (screen_width - scaled_width) // 2
                 y = (screen_height - scaled_height) // 2
             
-            # Защита от улета за левый и верхний края монитора
+            # Защита от улета за границы экрана
             x = max(0, int(x))
             y = max(0, int(y))
             
-            # Устанавливаем геометрию (физические пиксели позиционирования)
             window.geometry(f"{width}x{height}+{x}+{y}")
-            
         except Exception as e:
-            print(f"[Ошибка центрирования]: {e}")
+            print(f"[Резервное центрирование]: {e}")
             window.geometry(f"{width}x{height}")
         finally:
-            # Гарантируем возврат видимости окну в любом случае!
+            # Блок гарантирует, что окно обязательно станет видимым на экране в любом случае!
             try:
                 window.attributes("-alpha", 1.0)
                 window.deiconify()
@@ -98,6 +93,108 @@ def center_window(window, width, height, parent=None):
                 pass
         
     window.after(100, _apply_centered_position)
+
+def bind_russian_hotkeys(widget):
+    """
+    Аппаратно-независимая обработка горячих клавиш (Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+X)
+    для русской и английской раскладок клавиатуры на уровне базовых виджетов Windows/Linux.
+    """
+    target = widget
+    if hasattr(widget, "_entry"):
+        target = widget._entry
+    elif hasattr(widget, "_textbox"):
+        target = widget._textbox
+
+    def handle_control_keys(event):
+        key = event.keysym.lower()
+        keycode = event.keycode
+        
+        # Вставка (Ctrl+V) -> код клавиши 86 на Windows
+        if keycode == 86 or key in ('v', 'cyrillic_em'):
+            try:
+                text = event.widget.clipboard_get()
+                try:
+                    if event.widget.tag_ranges("sel"):
+                        event.widget.delete("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        if event.widget.selection_present():
+                            event.widget.delete("sel.first", "sel.last")
+                    except Exception:
+                        pass
+                event.widget.insert("insert", text)
+            except Exception:
+                pass
+            return "break"
+            
+        # Копирование (Ctrl+C) -> код клавиши 67 на Windows
+        elif keycode == 67 or key in ('c', 'cyrillic_es'):
+            try:
+                selected_text = None
+                try:
+                    selected_text = event.widget.get("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        selected_text = event.widget.selection_get()
+                    except Exception:
+                        pass
+                if selected_text:
+                    event.widget.clipboard_clear()
+                    event.widget.clipboard_append(selected_text)
+            except Exception:
+                pass
+            return "break"
+            
+        # Выделить все (Ctrl+A) -> код клавиши 65 на Windows
+        elif keycode == 65 or key in ('a', 'cyrillic_ef'):
+            try:
+                if hasattr(event.widget, "tag_add"):
+                    event.widget.tag_add("sel", "1.0", "end-1c")
+                    event.widget.mark_set("insert", "1.0")
+                elif hasattr(event.widget, "select_range"):
+                    event.widget.select_range(0, "end")
+                    event.widget.icursor("end")
+            except Exception:
+                pass
+            return "break"
+            
+        # Вырезать (Ctrl+X) -> код клавиши 88 на Windows
+        elif keycode == 88 or key in ('x', 'cyrillic_che'):
+            try:
+                selected_text = None
+                try:
+                    selected_text = event.widget.get("sel.first", "sel.last")
+                    if selected_text:
+                        event.widget.clipboard_clear()
+                        event.widget.clipboard_append(selected_text)
+                        event.widget.delete("sel.first", "sel.last")
+                except Exception:
+                    try:
+                        selected_text = event.widget.selection_get()
+                        if selected_text:
+                            event.widget.clipboard_clear()
+                            event.widget.clipboard_append(selected_text)
+                            event.widget.delete("sel.first", "sel.last")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return "break"
+
+    try:
+        target.bind("<Control-KeyPress>", handle_control_keys)
+    except Exception as e:
+        print(f"[Ошибка привязки клавиш]: {e}")
+
+def open_browser_link(url):
+    """Безопасно открывает ссылку в браузере по умолчанию"""
+    if url and url != "#":
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось открыть ссылку: {e}")
+    else:
+        messagebox.showinfo("Информация", "Ссылка на вакансию отсутствует.")
 
 def open_window(parent_window):
     """Создает независимое окно со списком одобренных и отклоненных вакансий"""
@@ -130,6 +227,14 @@ def open_window(parent_window):
         else:
             window.current_tab = "REJECTED"
             btn_clear_all.configure(text="🗑️ Очистить журнал отклонений", fg_color="#374151", hover_color="#4B5563")
+        
+        # СБРОС Скролла вверх и обновление геометрии для предотвращения зависания вьюпорта
+        try:
+            scroll_frame._parent_canvas.yview_moveto(0)
+            window.update_idletasks()
+        except Exception:
+            pass
+            
         refresh_list(force=True)
 
     # Переключатель вкладок
@@ -196,29 +301,38 @@ def open_window(parent_window):
                 info_text = f"🏢 {company}\n💼 {title}"
                 info_lbl = ctk.CTkLabel(
                     card, text=info_text, font=("Arial", 13, "bold"), 
-                    anchor="w", justify="left", text_color="#E5E7EB", wraplength=400
+                    anchor="w", justify="left", text_color="#E5E7EB", wraplength=380
                 )
                 info_lbl.pack(side="left", padx=15, pady=12, fill="x", expand=True)
 
                 btn_frame = ctk.CTkFrame(card, fg_color="transparent")
                 btn_frame.pack(side="right", padx=10, pady=10)
 
+                # Кнопка "Показать полностью"
                 btn_open = ctk.CTkButton(
-                    btn_frame, text="📄 Показать полностью", width=140, fg_color="#10B981", hover_color="#059669",
+                    btn_frame, text="📄 Детали", width=100, fg_color="#10B981", hover_color="#059669",
                     command=lambda t=title, c=company, cl=cover_letter, d=description: show_details_window(window, t, c, cl, d)
                 )
-                btn_open.grid(row=0, column=0, padx=5)
+                btn_open.grid(row=0, column=0, padx=3)
 
+                # Кнопка автоматического перехода по внешней ссылке "Откликнуться"
+                btn_apply = ctk.CTkButton(
+                    btn_frame, text="🚀 Откликнуться", width=120, fg_color="#2563EB", hover_color="#1D4ED8",
+                    command=lambda u=url: open_browser_link(u)
+                )
+                btn_apply.grid(row=0, column=1, padx=3)
+
+                # Кнопка удаления из списка
                 btn_delete = ctk.CTkButton(
                     btn_frame, text="✕", width=32, height=32, corner_radius=6,
                     fg_color="#D94343", hover_color="#B83232",
                     font=("Arial", 12, "bold"),
                     command=lambda u=url: delete_approved_item(u)
                 )
-                btn_delete.grid(row=0, column=1, padx=5)
+                btn_delete.grid(row=0, column=2, padx=3)
 
             else:
-                # Отклоненная карточка с автопереносом длинной причины отказа!
+                # Отклоненная карточка с автопереносом длинной причины отказа
                 reason = item.get("reason", "Причина не указана")
                 
                 info_text = f"🏢 {company} | 💼 {title}\n"
@@ -234,14 +348,33 @@ def open_window(parent_window):
                 )
                 reason_lbl.pack(anchor="w", padx=15, pady=(0, 10), fill="x", expand=True)
 
+                # Контейнер для нижних кнопок плохой карточки
+                opt_frame = ctk.CTkFrame(card, fg_color="transparent")
+                opt_frame.pack(anchor="e", padx=15, pady=(0, 10))
+
+                # Кнопка вопреки ИИ "Всё равно откликнуться"
+                btn_anyway = ctk.CTkButton(
+                    opt_frame, text="🔗 Всё равно откликнуться", width=170, height=26, corner_radius=6,
+                    fg_color="#4F46E5", hover_color="#4338CA",
+                    font=("Arial", 11),
+                    command=lambda u=url: open_browser_link(u)
+                )
+                btn_anyway.pack(side="left", padx=5)
+
                 # Кнопка удаления для отклоненного элемента
                 btn_delete_rej = ctk.CTkButton(
-                    card, text="Удалить из истории ✕", width=150, height=26, corner_radius=6,
+                    opt_frame, text="Удалить из истории ✕", width=150, height=26, corner_radius=6,
                     fg_color="#374151", hover_color="#4B5563",
                     font=("Arial", 11),
                     command=lambda u=url: delete_rejected_item(u)
                 )
-                btn_delete_rej.pack(anchor="e", padx=15, pady=(0, 10))
+                btn_delete_rej.pack(side="left", padx=5)
+        
+        # Обновляем задачи рендеринга интерфейса для устранения "шлейфов" и размытия
+        try:
+            window.update_idletasks()
+        except Exception:
+            pass
 
     def auto_refresh_loop():
         """Фоновый цикл проверки базы данных каждые 3 секунды"""
@@ -281,9 +414,8 @@ def open_window(parent_window):
     refresh_list(force=True)
     auto_refresh_loop()
 
-
 def show_details_window(parent, title, company, cover_letter, description):
-    """Детальное окно просмотра вакансии и сопроводительного письма (как на скриншотах 2 и 3)"""
+    """Детальное окно просмотра вакансии и сопроводительного письма"""
     top = ctk.CTkToplevel(parent)
     top.title("Полная информация о вакансии")
     
@@ -309,6 +441,9 @@ def show_details_window(parent, title, company, cover_letter, description):
     # Окно вывода содержимого
     content_box = ctk.CTkTextbox(top, font=("Arial", 13), width=640, height=500, fg_color="#262A26")
     content_box.pack(pady=10, padx=20)
+    
+    # Применение биндинга горячих клавиш для русской раскладки в окне деталей
+    bind_russian_hotkeys(content_box)
     
     def show_desc():
         btn_desc.configure(fg_color="#10B981", hover_color="#059669")
