@@ -1,14 +1,18 @@
 const URL_BACKEND = 'http://localhost:5000/webhook';
 
-// Таймаут на сетевой запрос. Если десктоп-приложение запущено, но worker завис
-// или сокет принял соединение и не отвечает, без таймаута fetch висел бы вечно,
-// а бейдж "..." остался бы навсегда. 8 секунд — с запасом для локального сервера.
+// Network timeout. Without it, fetch would hang forever if the desktop app is
+// running but its worker is stuck or the socket accepted the connection silently.
+// 8 s is generous for a local server.
 const FETCH_TIMEOUT_MS = 8000;
 
-// Защита от гонки бейджа: бейдж в Chrome глобальный для всего расширения, поэтому
-// при быстрых кликах по разным вкладкам setTimeout от раннего запроса мог затереть
-// индикатор позднего. Каждый клик получает уникальный токен; сброс/обновление
-// бейджа выполняется только если токен всё ещё актуален (т.е. это последний клик).
+// Must stay in sync with manifest.json → action.default_title so the tooltip
+// resets cleanly after an error.
+const DEFAULT_TITLE = 'Отправить вакансию в Job Hunter AI';
+
+// Badge race-condition guard: the Chrome action badge is global for the whole
+// extension. Rapid clicks on different tabs could let a setTimeout from an
+// earlier request overwrite the badge of a later one. Each click gets a unique
+// token; badge updates are skipped unless the token is still current.
 let badgeToken = 0;
 
 function setBadge(text, color) {
@@ -18,7 +22,7 @@ function setBadge(text, color) {
   }
 }
 
-// Очищает бейдж через задержку, но только если с момента запуска не было нового клика.
+// Clears the badge after a delay, but only if no newer click has started.
 function clearBadgeLater(token, delay = 2500) {
   setTimeout(() => {
     if (token === badgeToken) {
@@ -27,12 +31,14 @@ function clearBadgeLater(token, delay = 2500) {
   }, delay);
 }
 
-// Применяет финальный бейдж только если этот клик всё ещё последний.
-function applyFinalBadge(token, text, color) {
+// Applies the final badge + tooltip only if this click is still the latest one.
+// title defaults to DEFAULT_TITLE so success callers need no extra argument.
+function applyFinalBadge(token, text, color, title = DEFAULT_TITLE) {
   if (token !== badgeToken) {
-    return; // Появился более новый клик — не вмешиваемся в его индикацию.
+    return; // A newer click is already in progress — don't interfere.
   }
   setBadge(text, color);
+  chrome.action.setTitle({ title });
   clearBadgeLater(token);
 }
 
@@ -47,41 +53,58 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
-  // Текущему клику присваиваем новый токен и становимся "последним" кликом.
+  // This click becomes the current one; earlier badge timers will no-op.
   const token = ++badgeToken;
 
-  // Оранжевый индикатор загрузки.
+  // Orange spinner badge while the request is in flight.
   setBadge('...', '#FFA500');
 
+  // Reset any stale error tooltip from a previous failed run before we start.
+  chrome.action.setTitle({ title: DEFAULT_TITLE });
+
   try {
-    if (!tab || !tab.id || !tab.url || !tab.url.startsWith('http')) {
+    // With activeTab alone, Chrome can strip tab.url when the tab was opened in
+    // the background or when the icon is clicked before the navigation commits.
+    // The "tabs" permission in manifest.json prevents that stripping.
+    if (!tab?.id || !tab.url?.startsWith('http')) {
       throw new Error('Парсинг невозможен на этой вкладке');
     }
 
-    // Вытаскиваем текст со страницы.
+    // Injecting into a still-loading tab risks capturing the previous page's
+    // content or a blank body mid-transition (common on SPAs during route change).
+    if (tab.status === 'loading') {
+      throw new Error('Страница ещё загружается — попробуйте ещё раз');
+    }
+
+    // Extract the page text via content script injection.
     const injection = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => document.body.innerText
     });
-    const pageText = (injection && injection[0] && injection[0].result) || '';
+    const pageText = injection?.[0]?.result ?? '';
 
-    // Отправляем данные в Job Hunter AI с таймаутом.
+    // SPAs (LinkedIn, Greenhouse, etc.) temporarily blank document.body.innerText
+    // during client-side route transitions. Sending an empty payload would silently
+    // enqueue a useless record in the backend without any useful text to analyse.
+    if (!pageText.trim()) {
+      throw new Error(
+        'Текст страницы пуст — страница ещё отрисовывается. Дождитесь загрузки и попробуйте снова'
+      );
+    }
+
+    // Send the vacancy data to the local Job Hunter AI desktop app.
     let response;
     try {
       response = await fetchWithTimeout(URL_BACKEND, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: tab.url,
-          title: tab.title,
-          text: pageText
-        })
+        body: JSON.stringify({ url: tab.url, title: tab.title, text: pageText })
       }, FETCH_TIMEOUT_MS);
     } catch (netErr) {
-      if (netErr && netErr.name === 'AbortError') {
+      if (netErr?.name === 'AbortError') {
         throw new Error('Превышено время ожидания ответа сервера (таймаут)');
       }
-      // ERR_CONNECTION_REFUSED и прочие сетевые сбои — приложение, скорее всего, выключено.
+      // ERR_CONNECTION_REFUSED and similar network failures mean the app is likely off.
       throw new Error('Нет связи с Job Hunter AI. Запустите приложение');
     }
 
@@ -89,33 +112,34 @@ chrome.action.onClicked.addListener(async (tab) => {
       throw new Error(`Сервер ответил ошибкой: ${response.status}`);
     }
 
-    // Сервер всегда отвечает JSON-ом. Важно: status="ignored" приходит с HTTP 200,
-    // когда ассистент выключен, поэтому одного response.ok недостаточно —
-    // нужно прочитать тело и различить реальные состояния.
+    // The server always responds with JSON. Important: status="ignored" arrives
+    // with HTTP 200 when the assistant is disabled, so response.ok alone is not
+    // enough — we must read the body to distinguish real outcomes.
     let data = {};
     try {
       data = await response.json();
     } catch (parseErr) {
-      console.warn('Job Hunter AI: не удалось разобрать JSON ответа сервера:', parseErr);
-      // Тело нечитаемо, но HTTP 200 — трактуем как мягкий успех.
+      // Unreadable body with HTTP 200 — treat as a soft success.
+      console.warn('Job Hunter AI: failed to parse server JSON response:', parseErr);
       data = {};
     }
 
     if (data.status === 'ignored') {
-      // Ассистент запущен, но приём вакансий выключен — вакансия НЕ обработана.
-      // Жёлтый OFF, чтобы пользователь не думал, что отправка прошла.
+      // App is running but intake is disabled — the vacancy was NOT processed.
+      // Yellow OFF badge so the user knows the submission did not go through.
       applyFinalBadge(token, 'OFF', '#FFC107');
     } else if (data.status === 'error') {
-      // Сервер явно сообщил об ошибке обработки в теле ответа.
-      throw new Error(`Сервер сообщил об ошибке: ${data.reason || 'неизвестно'}`);
+      // Server explicitly reported a processing error in the response body.
+      throw new Error(`Сервер сообщил об ошибке: ${data.reason ?? 'неизвестно'}`);
     } else {
-      // status === "received" (или иной успешный ответ) — вакансия принята в очередь.
+      // status === "received" (or any other success) — vacancy accepted into queue.
       applyFinalBadge(token, 'OK', '#4CAF50');
     }
 
   } catch (error) {
-    console.error('Ошибка парсера Job Hunter AI:', error);
-    // Красный индикатор ошибки (только если этот клик всё ещё последний).
-    applyFinalBadge(token, 'ERR', '#D32F2F');
+    console.error('Job Hunter AI parser error:', error);
+    // Surface the human-readable message as a hover tooltip so the user knows
+    // what went wrong without opening DevTools. Resets automatically on the next click.
+    applyFinalBadge(token, 'ERR', '#D32F2F', error.message ?? 'Неизвестная ошибка');
   }
 });

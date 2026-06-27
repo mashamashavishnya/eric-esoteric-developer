@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Job Hunter AI Parser",
-  "version": "1.3.0",
-  "description": "Мгновенный парсинг вакансий напрямую в Job Hunter AI",
+  "version": "2.0.1",
+  "description": "Instant job vacancy parsing directly into Job Hunter AI",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "background": {
     "service_worker": "background.js"
