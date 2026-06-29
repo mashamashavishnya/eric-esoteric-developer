@@ -50,7 +50,7 @@
       </ul>
     </td>
     <td width="40%" align="center" valign="middle">
-      <img src="assets/1.png" width="216" alt="Job Hunter AI Interface">
+      <img src="assets/1.png" width="290" alt="Job Hunter AI Interface">
     </td>
   </tr>
 </table>
@@ -75,42 +75,6 @@
 The app lives in the **system tray** and runs silently in the background.
 
 [![Installation Guide](https://img.shields.io/badge/⚙️_Setup-Full_installation_guide-00B981?style=for-the-badge&logo=readme)](install/INSTALL.md)
-
-<hr>
-
-## 🔄 How it works
-
-```
-  Any browser, any site              Job Hunter AI (system tray)
-  ─────────────────────              ────────────────────────────
-  1. Open job posting
-                          Ctrl+Shift+J
-  2. ──────────────────────────────────►  BrowserCaptureEngine
-                                          pynput GlobalHotKeys
-  3.  ◄── Ctrl+A (select all) ──────────
-      ◄── Ctrl+C (copy text)  ──────────
-
-  4.  clipboard text ────────────────►  pyperclip.paste()
-                                        MD5 hash dedup check
-                                        queue.put(text, url)
-
-  5.                                    extract_relevant_context()
-                                        keyword scoring · budget packing
-
-                                        ┌─ Stage 1: Filter ─────────┐
-                                        │  Scam · MLM · Toxic       │
-                                        │  >45 h/week · Geo rule    │
-                                        └───────────┬───────────────┘
-                                          REJECTED  │  APPROVED
-                                                    ▼
-                                        ┌─ Stage 2: Letter ─────────┐
-                                        │  Personalized cover letter│
-                                        │  no filler, no templates  │
-                                        └───────────────────────────┘
-
-  6.                           ◄────  Toast notification
-                                      Vacancy card in the UI
-```
 
 <hr>
 
@@ -180,8 +144,8 @@ The app lives in the **system tray** and runs silently in the background.
 
 <details>
 <summary>🗺️ Architecture diagram</summary>
-<br>
-<pre>
+
+```
  ┌──────────────────────────────────────────────────────────────────┐
  │           ANY JOB POSTING  ·  ANY BROWSER  ·  Ctrl+Shift+J      │
  └──────────────────────────────────┬───────────────────────────────┘
@@ -249,7 +213,8 @@ The app lives in the **system tray** and runs silently in the background.
                   │  HiDPI · Dark Win32 title bar       │
                   │  EN / RU  (jh_i18n.py)             │
                   └────────────────────────────────────┘
-</pre>
+```
+
 </details>
 
 ---
