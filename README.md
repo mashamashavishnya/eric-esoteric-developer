@@ -264,6 +264,12 @@ The app lives in the **system tray** and runs silently in the background.
 * **[Notifications]** Thread-safe toast: `_notification_lock` guards `_toast_ref` mutations. `_fade_out_instance` captures `toast` directly (not the global ref) — concurrent notifications can't corrupt each other's fade animation. Nullifies the global ref only if `_toast_ref[0] is toast` (identity check, not equality).
 * **[Build]** `build_exe.py`: fixed `logo.png` path from project root to `assets/logo.png`. `installer.iss`: removed all extension-related blocks (`[Files]`, `[Icons]`, `[Run]`, `[CustomMessages]`). `build_linux.py`: new, mirrors `build_exe.py` with Linux-specific hidden imports, `--noconsole`, `os.chmod(0o755)`, and system dependency banner.
 
+**Bug fixes (UI freeze)**
+
+* **[Fix]** Results/History window could freeze the entire app ("Not Responding") after roughly 10 processed vacancies. Root cause: `jh_results_ui.py` called `storage_manager.get_all_approved()` / `get_all_rejected()` (and the delete / clear-all mutations) directly on the Tk **main thread** — on window open, on every tab switch, and on every delete/clear click. All of those block on the same process-wide `_file_lock` that the background queue worker holds while persisting each processed vacancy, including the `fsync()` + `os.replace()` in `_write_json_atomic()`. On a slow, antivirus-scanned, or cloud-synced disk that lock hold can stretch from tens of ms to multiple seconds — and since it happened on the main thread, the entire Tk message loop stalled for the duration, which Windows reports as "Not Responding". More queued vacancies meant more frequent worker writes, so the odds of an unlucky UI click landing on the lock grew with volume — explaining why it surfaced "after about 10 vacancies" rather than immediately.
+* **[Fix]** Added a `_run_async()` helper in `jh_results_ui.py` and routed every storage read/write triggered from a UI event (initial load, tab switch, delete, clear-all, periodic refresh) through it: the I/O now runs on a background daemon thread and results are applied via `window.after(0, ...)`, mirroring the pattern `auto_refresh_loop()` already used correctly. `refresh_list()` now refuses to run without pre-fetched data instead of silently blocking.
+* **[Fix]** The `<Configure>` handler on each vacancy card's info label called `.configure(wraplength=...)` unconditionally on every resize event, which could re-trigger its own `<Configure>` and add extra reflow passes scaling with card count inside the `CTkScrollableFrame`. Now caches the last applied wraplength and skips the call when it hasn't changed.
+
 **Bug fixes carried over from 2.0.2**
 
 * **[Fix]** Notification theme not applied at startup: `jh_notifications.apply_theme()` was called before the module was imported — a silent `NameError` swallowed by `except Exception` meant toast colors were always stuck at hardcoded defaults, ignoring the selected theme entirely.
@@ -363,6 +369,7 @@ The app lives in the **system tray** and runs silently in the background.
 - [x] Fixed Gemini config migration mapping `"gemini-3.0-pro"` to a non-existent model.
 - [x] Fixed slow-model warning not showing the tokens/sec threshold (`{min_tps}` placeholder missing).
 - [x] Fixed icon and logo not found outside a packaged build (asset search now covers project root and `assets/`).
+- [x] Fixed Results window freezing the entire app ("Not Responding") after ~10 vacancies — UI-thread calls into `storage_manager` (window open, tab switch, delete, clear-all) now run on a background thread via a new `_run_async()` helper, instead of blocking on `_file_lock` while the queue worker writes.
 
 </details>
 

@@ -1,6 +1,7 @@
 # jh_results_ui.py
 import os
 import sys
+import threading
 import webbrowser
 import customtkinter as ctk
 import jh_storage_manager as storage_manager
@@ -360,6 +361,44 @@ def open_browser_link(url):
     else:
         messagebox.showinfo("Info", tr("no_link"))
 
+
+def _run_async(window, work_fn, done_fn):
+    """
+    Runs work_fn() on a background daemon thread, then marshals done_fn(result)
+    back onto the Tk main thread via window.after(0, ...).
+
+    Why this exists: storage_manager serialises every read/write behind a
+    single process-wide _file_lock, and the background queue worker holds
+    that lock (including the fsync()+os.replace() in _write_json_atomic)
+    every time it persists a processed vacancy. On a slow, antivirus-scanned,
+    or cloud-synced disk that fsync can stall for anywhere from tens of ms to
+    multiple seconds. If a UI event handler calls storage_manager directly,
+    it blocks waiting for that same lock — and since that call happens on the
+    Tk main thread, the ENTIRE app's message loop stops pumping for the
+    duration of the stall. That is what Windows reports as "Not Responding".
+
+    Rule going forward: no Tkinter/CTk callback in this module may call
+    storage_manager functions directly. Always go through this helper.
+
+    work_fn — zero-arg callable, executed off the UI thread. Must not touch
+              any Tkinter/CTk widget.
+    done_fn — callable invoked on the UI thread with work_fn()'s return value
+              once it completes. Safe to touch widgets here.
+    """
+    def _worker():
+        try:
+            result = work_fn()
+        except Exception as e:
+            print(f"[Results UI]: Background storage operation failed: {e}")
+            result = None
+        try:
+            if window.winfo_exists():
+                window.after(0, lambda: done_fn(result))
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def open_window(parent_window):
     """Создает независимое окно со списком одобренных и отклоненных вакансий"""
     jh_i18n.set_language(storage_manager.load_config().get("language", "en"))
@@ -476,6 +515,9 @@ def open_window(parent_window):
     window.after(50, _update_monitoring)
 
     def clear_all():
+        # The confirm dialog itself is a legitimate blocking modal — it's a
+        # direct user interaction, not file I/O. Only the storage mutation
+        # that follows is moved off the UI thread.
         if window.current_tab == "APPROVED":
             ans = messagebox.askyesno(
                 tr("clear_title"),
@@ -483,8 +525,7 @@ def open_window(parent_window):
                 parent=window
             )
             if ans:
-                storage_manager.clear_all_vacancies()
-                refresh_list(force=True)
+                _run_async(window, storage_manager.clear_all_vacancies, lambda _r: _load_and_apply(force=True))
         else:
             ans = messagebox.askyesno(
                 tr("clear_title"),
@@ -492,8 +533,7 @@ def open_window(parent_window):
                 parent=window
             )
             if ans:
-                storage_manager.clear_all_rejected()
-                refresh_list(force=True)
+                _run_async(window, storage_manager.clear_all_rejected, lambda _r: _load_and_apply(force=True))
 
         window.lift()
         window.focus_force()
@@ -538,7 +578,7 @@ def open_window(parent_window):
             except Exception as e:
                 print(f"[Results UI]: yview_moveto (rejected) пропущен: {e}")
 
-        refresh_list(force=False)
+        _load_and_apply(force=False)
 
     tab_segment = ctk.CTkSegmentedButton(
         controls_header,
@@ -585,8 +625,18 @@ def open_window(parent_window):
         )
         info_lbl.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
 
+        # Cache the last applied wraplength and skip configure() when it
+        # hasn't actually changed. Without this guard, every <Configure>
+        # event calls .configure(wraplength=...), which can itself alter the
+        # label's requested size and re-trigger <Configure> — a reflow loop
+        # whose cost scales with the number of cards in the scrollable frame.
+        _last_wrap = [200]
+
         def _on_info_configure(event, lbl=info_lbl):
-            lbl.configure(wraplength=max(40, event.width - 8))
+            new_wrap = max(40, event.width - 8)
+            if new_wrap != _last_wrap[0]:
+                _last_wrap[0] = new_wrap
+                lbl.configure(wraplength=new_wrap)
         info_lbl.bind("<Configure>", _on_info_configure)
 
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
@@ -836,7 +886,17 @@ def open_window(parent_window):
     def refresh_list(force=False, _preloaded=None):
         """
         Дифференциально обновляет списки вакансий без полного уничтожения карточек.
-        _preloaded: (approved, rejected) tuple pre-fetched from a background thread.
+
+        _preloaded: (approved, rejected) tuple pre-fetched from a background
+        thread. This function must ALWAYS be called either with _preloaded
+        already supplied, or via _load_and_apply() below — never call
+        storage_manager.get_all_*() directly from this function or from any
+        Tkinter event handler. Those calls block on storage_manager's
+        process-wide _file_lock, which the background queue worker also
+        holds while persisting vacancies (including a disk fsync). Doing
+        that synchronously on the Tk main thread is exactly what produces
+        the "Not Responding" freeze once enough vacancies are queued for
+        lock contention to become likely.
         """
         if not window.winfo_exists():
             return
@@ -844,13 +904,9 @@ def open_window(parent_window):
         if _preloaded is not None:
             approved, rejected = _preloaded
         else:
-            try:
-                approved = _dedup_by_url(storage_manager.get_all_approved())
-                rejected = _dedup_by_url(storage_manager.get_all_rejected())
-            except Exception as e:
-                print(f"[Ошибка чтения БД]: {e}")
-                approved = []
-                rejected = []
+            print("[Results UI]: refresh_list() called without _preloaded — "
+                  "this would block the UI thread on file I/O. Skipping.")
+            return
 
         # --- Эти обновления выполняются ВСЕГДА, даже без изменений в данных, ---
         # --- но внутри себя дёргают виджеты только при реальном изменении.    ---
@@ -888,40 +944,55 @@ def open_window(parent_window):
         window.last_approved_count = len(approved)
         window.last_rejected_count = len(rejected)
 
-    def auto_refresh_loop():
-        if not window.winfo_exists():
-            return
-        # Читаем БД в фоновом потоке, чтобы не блокировать UI во время файлового I/O
-        import threading as _threading
-        def _bg_read():
+    def _load_and_apply(force=False):
+        """
+        Reads approved/rejected vacancies off the UI thread, then applies the
+        result via refresh_list() on the main thread. This is the ONLY
+        sanctioned way to load data into this window — every call site that
+        used to call storage_manager or refresh_list() directly (initial
+        open, tab switch, delete, clear, periodic refresh) now routes
+        through here.
+        """
+        def _fetch():
             try:
                 a = _dedup_by_url(storage_manager.get_all_approved())
                 r = _dedup_by_url(storage_manager.get_all_rejected())
-            except Exception:
+            except Exception as e:
+                print(f"[Ошибка чтения БД]: {e}")
                 a, r = [], []
-            def _apply():
-                if window.winfo_exists():
-                    refresh_list(force=False, _preloaded=(a, r))
-            # Двойная проверка: window может быть уничтожено пока поток читал БД.
-            # winfo_exists() + try/except защищает от TclError при вызове after()
-            # из фонового потока после закрытия окна.
-            try:
-                if window.winfo_exists():
-                    window.after(0, _apply)
-            except Exception:
-                pass
-        _threading.Thread(target=_bg_read, daemon=True).start()
+            return (a, r)
+
+        def _apply(data):
+            if window.winfo_exists():
+                refresh_list(force=force, _preloaded=data)
+
+        _run_async(window, _fetch, _apply)
+
+    def auto_refresh_loop():
+        if not window.winfo_exists():
+            return
+        _load_and_apply(force=False)
         window.after(3000, auto_refresh_loop)
 
     def delete_approved_item(url):
-        storage_manager.delete_vacancy_by_url(url)
-        refresh_list(force=True)
+        _run_async(
+            window,
+            lambda: storage_manager.delete_vacancy_by_url(url),
+            lambda _r: _load_and_apply(force=True),
+        )
 
     def delete_rejected_item(url):
-        storage_manager.delete_rejected_by_url(url)
-        refresh_list(force=True)
+        _run_async(
+            window,
+            lambda: storage_manager.delete_rejected_by_url(url),
+            lambda _r: _load_and_apply(force=True),
+        )
 
-    refresh_list(force=True)
+    # Loaded asynchronously: the window appears immediately (briefly empty),
+    # then populates as soon as the background read completes — instead of
+    # blocking the entire app on disk I/O + card construction before the
+    # window can even be shown.
+    _load_and_apply(force=True)
     auto_refresh_loop()
 
     # Show window after all UI is packed — correct Windows HWND + icon pattern
