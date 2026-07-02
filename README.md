@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-3670A0?style=flat&logo=python&logoColor=ffdd54" alt="Python">
-  <img src="https://img.shields.io/badge/Release-v3.1-00B981?style=flat" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v3.1.1-00B981?style=flat" alt="Release">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D4?style=flat&logo=linux&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/License-Non--Commercial-EF4444?style=flat" alt="License">
 </p>
@@ -250,7 +250,20 @@ The app lives in the **system tray** and runs silently in the background.
 ## 🚀 Changelog
 
 <details open>
-<summary><b>🟢 v3.1 — OpenRouter provider + reliability hardening (Current)</b></summary>
+<summary><b>🟢 v3.1.1 — Hotfixes: tray restore, copy button, company extraction (Current)</b></summary>
+
+<br>
+
+> **Three targeted bug fixes on top of v3.1.**
+
+* **[Fix]** Clicking a notification now reliably restores the window from the tray. `icon.stop()` inside `_bring_to_front` was unguarded — if pystray raised, the follow-up restore call never ran and the window stayed hidden. It is now wrapped, and `_restore_from_tray` forces the window to the foreground (`state("normal")` + a brief topmost toggle) so it surfaces above the browser on Windows instead of restoring behind it.
+* **[Fix]** The "Copy letter" button no longer loses its label when clicked. The confirmation state drew `COLOR_TEXT_LIGHT` text on a `COLOR_CYAN_HOVER` fill — under the Cyber-Owl theme that is light-on-light (`#C8D4E0` on `#7DC8D4`), so "Copied! ✓" was invisible. The copied state now uses dark text for readable contrast in every theme.
+* **[Fix]** Fewer spurious "company not specified" results. Field extraction now strips and normalizes the model output (empty / `null` / missing key are all handled), falls back to a language-appropriate label instead of a hardcoded Russian one, and the Stage-1 prompt now instructs the model to find the employer anywhere in the posting (page title, "About us", repeated brand names, email domains) rather than giving up when it is not in an obvious header.
+
+</details>
+
+<details>
+<summary><b>🟢 v3.1 — OpenRouter provider + reliability hardening</b></summary>
 
 <br>
 
@@ -444,5 +457,5 @@ If something breaks — open an Issue. Critical bugs will be fixed.
 ---
 
 <p align="center">
-  <sub>Made for people who value their time · Non-Commercial · v3.1</sub>
+  <sub>Made for people who value their time · Non-Commercial · v3.1.1</sub>
 </p>

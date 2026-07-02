@@ -1056,7 +1056,10 @@ def show_letter_window(parent, title, company, cover_letter):
     def copy_to_clipboard():
         top.clipboard_clear()
         top.clipboard_append(content_box.get("0.0", "end-1c"))
-        btn_copy.configure(text=tr("copied_ok_text"), fg_color=COLOR_CYAN_HOVER, text_color=COLOR_TEXT_LIGHT)
+        # Use dark text on the light hover background so the confirmation label
+        # stays readable. With COLOR_TEXT_LIGHT the text matched the button fill
+        # under the Cyber-Owl theme (#C8D4E0 on #7DC8D4) and became invisible.
+        btn_copy.configure(text=tr("copied_ok_text"), fg_color=COLOR_CYAN_HOVER, text_color=COLOR_BG_DARK)
         top.after(2000, lambda: btn_copy.configure(text=tr("btn_copy"), fg_color=COLOR_CYAN_NEON, text_color=COLOR_BG_DARK))
 
     btn_copy = ctk.CTkButton(

@@ -615,10 +615,17 @@ class JobHunterApp(ctk.CTk):
         t.start()
 
     def _restore_from_tray(self) -> None:
-        """Restores the main window from the system tray."""
+        """Restores the main window from the system tray and forces it to the front."""
         try:
             self.deiconify()
+            self.state("normal")          # guarantee it isn't left iconified
             self.lift()
+            # Briefly assert topmost then release it: on Windows deiconify()+lift()
+            # alone frequently fails to pull a background-restored window in front
+            # of the browser the user was on, so the window would "restore" but
+            # stay hidden behind other windows — indistinguishable from not opening.
+            self.attributes("-topmost", True)
+            self.after(250, lambda: self.attributes("-topmost", False))
             self.focus_force()
             force_dark_title_bar(self)
         except Exception:
@@ -632,7 +639,14 @@ class JobHunterApp(ctk.CTk):
             # Calling deiconify() while the tray icon's Win32 message loop is still
             # running prevents the window from reliably receiving foreground focus.
             def _stop_then_restore():
-                icon.stop()
+                # icon.stop() MUST NOT be allowed to abort the restore: if pystray
+                # raises here (e.g. the tray thread already exited), the window
+                # would silently never come back from the tray. Swallow any error
+                # and always schedule the restore.
+                try:
+                    icon.stop()
+                except Exception:
+                    logger.debug("Suppressed exception", exc_info=True)
                 if self._alive.is_set():
                     try:
                         self.after(0, self._restore_from_tray)

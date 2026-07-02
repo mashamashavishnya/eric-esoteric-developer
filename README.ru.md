@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-3670A0?style=flat&logo=python&logoColor=ffdd54" alt="Python">
-  <img src="https://img.shields.io/badge/Релиз-v3.1-00B981?style=flat" alt="Релиз">
+  <img src="https://img.shields.io/badge/Релиз-v3.1.1-00B981?style=flat" alt="Релиз">
   <img src="https://img.shields.io/badge/Платформа-Windows%20%7C%20Linux-0078D4?style=flat&logo=linux&logoColor=white" alt="Платформа">
   <img src="https://img.shields.io/badge/Лицензия-Некоммерческая-EF4444?style=flat" alt="Лицензия">
 </p>
@@ -249,7 +249,20 @@ https://github.com/user-attachments/assets/ab707ab6-42a2-4939-bdd4-e7700fc2d999
 ## 🚀 История обновлений
 
 <details open>
-<summary><b>🟢 v3.1 — Провайдер OpenRouter + повышение надёжности (Текущая версия)</b></summary>
+<summary><b>🟢 v3.1.1 — Хотфиксы: разворачивание из трея, кнопка копирования, извлечение компании (Текущая версия)</b></summary>
+
+<br>
+
+> **Три точечных исправления поверх v3.1.**
+
+* **[Фикс]** Клик по уведомлению снова надёжно разворачивает окно из трея. Вызов `icon.stop()` внутри `_bring_to_front` был без защиты — если pystray бросал исключение, следующий за ним вызов восстановления не выполнялся и окно оставалось скрытым. Теперь вызов обёрнут в try/except, а `_restore_from_tray` принудительно выводит окно на передний план (`state("normal")` + кратковременный topmost), чтобы оно появлялось поверх браузера в Windows, а не позади него.
+* **[Фикс]** Кнопка «Скопировать письмо» больше не теряет подпись при нажатии. Состояние подтверждения рисовало текст цветом `COLOR_TEXT_LIGHT` на фоне `COLOR_CYAN_HOVER` — в теме Cyber-Owl это светлое-на-светлом (`#C8D4E0` на `#7DC8D4`), поэтому «Скопировано! ✓» становилось невидимым. Теперь состояние копирования использует тёмный текст с читаемым контрастом во всех темах.
+* **[Фикс]** Реже появляется ложное «компания не указана». Извлечение полей теперь очищает и нормализует ответ модели (пустая строка / `null` / отсутствие ключа обрабатываются), подставляет подпись на языке интерфейса вместо захардкоженной русской, а промпт Stage 1 указывает модели искать работодателя по всему тексту (заголовок страницы, «О компании», повторяющиеся упоминания бренда, email-домены), а не сдаваться, если его нет в очевидном заголовке.
+
+</details>
+
+<details>
+<summary><b>🟢 v3.1 — Провайдер OpenRouter + повышение надёжности</b></summary>
 
 <br>
 
@@ -443,5 +456,5 @@ https://github.com/user-attachments/assets/ab707ab6-42a2-4939-bdd4-e7700fc2d999
 ---
 
 <p align="center">
-  <sub>Made for people who value their time · Non-Commercial · v3.1</sub>
+  <sub>Made for people who value their time · Non-Commercial · v3.1.1</sub>
 </p>

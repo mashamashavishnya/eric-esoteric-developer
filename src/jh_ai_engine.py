@@ -1305,6 +1305,14 @@ def analyze_and_generate(vacancy, config, cancel_event=None):
         "  'Где предстоит работать: Москва' (work_formats=['remote']) → 'none', []    ← site field only, no presence required\n"
         "  'Remote' (no geo mentioned, work_formats=['remote']) → 'none', []\n\n"
 
+        "=== COMPANY NAME (extracted_company) ===\n"
+        "ALWAYS identify the hiring company / employer. Search the ENTIRE posting: the page "
+        "title and headers, 'About us' / 'About the company' / 'Who we are' sections, "
+        "repeated brand names, email domains, and any signature or footer line. Return the "
+        "clean company name only (drop slogans, taglines, and boilerplate legal noise). "
+        "Return an empty string ONLY if no company is present anywhere in the text — do not "
+        "give up just because it is not in an obvious header.\n\n"
+
         "=== VACANCY COUNTRY ===\n"
         "Return 'vacancy_country' — the country the vacancy/employer is based in "
         "(e.g. the legal entity's country or the primary hiring country stated in the posting).\n"
@@ -1334,9 +1342,15 @@ def analyze_and_generate(vacancy, config, cancel_event=None):
         # Задействуем интеллектуальный безопасный парсер JSON
         result_json = clean_and_parse_json(res_text)
         
-        # Гарантируем наличие всех ключей
-        extracted_title = result_json.get("extracted_title", raw_title)
-        extracted_company = result_json.get("extracted_company", "Не указана")
+        # Robustly normalise extracted fields. The model occasionally returns an
+        # empty string or null for a field (or omits the key), so `.get(k, default)`
+        # alone is not enough — a present-but-empty value would slip through as a
+        # blank company. Strip whitespace and fall back only when the value is
+        # genuinely empty, using a language-appropriate label instead of a
+        # hardcoded Russian one that English users would otherwise see.
+        _company_unknown = "Не указана" if language == "ru" else "Not specified"
+        extracted_title = (result_json.get("extracted_title") or "").strip() or raw_title
+        extracted_company = (result_json.get("extracted_company") or "").strip() or _company_unknown
         extracted_vacancy_country = (result_json.get("vacancy_country") or "").strip()
         extracted_data = {
             "title": extracted_title,

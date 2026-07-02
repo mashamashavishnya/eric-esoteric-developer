@@ -13,7 +13,7 @@ Windows VERSIONINFO (последний — билд, по умолчанию 0)
 """
 
 APP_NAME = "Job Hunter AI"
-APP_VERSION = "3.1"
+APP_VERSION = "3.1.1"
 
 # Метаданные для свойств .exe в Windows
 COMPANY_NAME = "Job Hunter AI"
